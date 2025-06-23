@@ -1,0 +1,76 @@
+name: Deploy to Cloud Run
+
+on:
+  # Trigger the workflow manually from the Actions tab
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to deploy (default: master)'
+        required: false
+        default: 'master'
+      message:
+        description: 'Deployment message (optional)'
+        required: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ github.event.inputs.branch || github.ref_name }}
+
+    steps:
+      # Checkout code
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # Authenticate Google Cloud SDK
+      - name: Authenticate GCP using SA
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+
+      # Set up Google Cloud SDK
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      # Authenticate Docker with GCR
+      - name: Authenticate Docker with GCR
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev
+
+      # Fetch secrets from GCP Secrets Manager
+      - name: Fetch secrets for build
+        id: fetch-secrets
+        run: |
+          export BREVO_API_KEY=$(gcloud secrets versions access latest --secret="BREVO_API_KEY")
+          export BREVO_LIST_ID=$(gcloud secrets versions access latest --secret="BREVO_LIST_ID")
+          echo "BREVO_API_KEY=$BREVO_API_KEY" >> $GITHUB_ENV
+          echo "BREVO_LIST_ID=$BREVO_LIST_ID" >> $GITHUB_ENV
+
+      # Build the Docker image
+      - name: Build the Docker image
+        env:
+          BREVO_API_KEY: ${{ env.BREVO_API_KEY }}
+          BREVO_LIST_ID: ${{ env.BREVO_LIST_ID }}
+        run: |
+          docker build \
+            --build-arg BREVO_API_KEY=$BREVO_API_KEY \
+            --build-arg BREVO_LIST_ID=$BREVO_LIST_ID \
+            -t ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/unloop/coming-soon:${{ github.sha }} .
+
+      # Push the Docker image to Google Container Registry
+      - name: Push Docker image to GCR
+        run: |
+          docker push ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/unloop/coming-soon:${{ github.sha }}
+
+      # Deploy to Cloud Run
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy coming-soon \
+            --image ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/unloop/coming-soon:${{ github.sha }} \
+            --platform managed \
+            --region ${{ secrets.GCP_REGION }} \
+            --allow-unauthenticated \
+            --update-secrets BREVO_API_KEY=projects/${{ secrets.GCP_SECRETS_PROJECT_ID }}/secrets/BREVO_API_KEY:latest \
+            --update-secrets BREVO_LIST_ID=projects/${{ secrets.GCP_SECRETS_PROJECT_ID }}/secrets/BREVO_LIST_ID:latest
