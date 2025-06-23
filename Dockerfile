@@ -36,7 +36,7 @@ COPY --from=build /usr/src/app/.next ./.next
 COPY --from=build /usr/src/app/public ./public
 COPY --from=build /usr/src/app/package*.json ./
 COPY --from=build /usr/src/app/node_modules ./node_modules
-COPY --from=build /usr/src/app/next.config.ts ./
+COPY --from=build /usr/src/app/next.config.mjs ./
 
 # Set environment variables again (Cloud Run can also override these)
 ENV BREVO_API_KEY=$BREVO_API_KEY
